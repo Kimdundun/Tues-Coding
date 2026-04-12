@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Space Gravity Lab | XR Blocks</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <link type="text/css" rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
+    <script>
+      window.litDisableBundleWarning = true;
+    </script>
+    <script type="importmap">
+      {
+        "imports": {
+          "@dimforge/rapier3d-simd-compat": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-simd-compat@0.19.2/rapier.mjs",
+          "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+          "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
+          "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
+          "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
+          "bidi-js": "https://esm.sh/bidi-js@%5E1.0.2?target=es2022",
+          "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
+          "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
+          "lit/": "https://esm.run/lit@3/",
+          "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.11.0/build/xrblocks.js",
+          "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.11.0/build/addons/"
+        }
+      }
+    </script>
+  </head>
+
+  <body style="background-color: #000;">
+    <script type="module">
+      import 'xrblocks/addons/simulator/SimulatorAddons.js';
+      import RAPIER from '@dimforge/rapier3d-simd-compat';
+      import * as THREE from 'three';
+      import * as xb from 'xrblocks';
+
+      /**
+       * Space Gravity Lab
+       * Spawns physics-enabled bouncing balls on click/trigger and allows
+       * changing global gravity via a spatial UI. Emits particles on impact.
+       */
+      class SpaceGravityLab extends xb.Script {
+        constructor() {
+          super();
+          // State tracking for physics and particles
+          this.spheres = [];
+          this.rigidBodies = [];
+          this.velocities = []; // Track Y velocities for bounce detection
+          this.particles = [];
+
+          // Shared Geometry & Materials
+          this.sphereRadius = 0.15; // Basketball size
+          this.sphereGeo = new THREE.SphereGeometry(this.sphereRadius, 32, 32);
+          
+          // Star particle design (Octahedron looks like a diamond/star)
+          this.starGeo = new THREE.OctahedronGeometry(0.04, 0); 
+          this.starMat = new THREE.MeshBasicMaterial({ color: 0xffdd44 });
+        }
+
+        /**
+         * Initializes the visual scene and Spatial UI.
+         */
+        init() {
+          // Remove default indoor environment/HDRI and set background to black
+          xb.core.scene.background = new THREE.Color(0x000000);
+          xb.core.scene.environment = null;
+
+          // 1. Lighting
+          this.add(new THREE.HemisphereLight(0xffffff, 0x222222, 1.5));
+          const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+          dirLight.position.set(5, 10, 5);
+          dirLight.castShadow = true;
+          this.add(dirLight);
+
+          // 2. Starry Background
+          this.createStarrySkybox();
+
+          // 3. Visual Floor
+          const floorGeo = new THREE.PlaneGeometry(50, 50);
+          const floorMat = new THREE.MeshStandardMaterial({ 
+            color: 0x1a1a2e, 
+            roughness: 0.8,
+            metalness: 0.2
+          });
+          const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+          floorMesh.rotation.x = -Math.PI / 2;
+          floorMesh.receiveShadow = true;
+          this.add(floorMesh);
+
+          // 4. Gravity Control UI
+          this.createGravityUI();
+        }
+
+        /**
+         * Hooks into the physics engine once RAPIER is loaded and ready.
+         * @param {Object} physics - Provided by XR Blocks containing RAPIER and the blendedWorld.
+         */
+        initPhysics(physics) {
+          this.RAPIER = physics.RAPIER;
+          this.world = physics.blendedWorld;
+
+          // Set default Earth gravity
+          this.world.gravity = { x: 0, y: -9.81, z: 0 };
+
+          // Create an invisible static collider matching the visual floor
+          const groundDesc = this.RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0);
+          const groundBody = this.world.createRigidBody(groundDesc);
+          // Cuboid half-extents: 25m x 0.1m x 25m
+          const groundShape = this.RAPIER.ColliderDesc.cuboid(25, 0.1, 25);
+          this.world.createCollider(groundShape, groundBody);
+        }
+
+        /**
+         * Creates a Spatial Panel to control environment gravity.
+         */
+        createGravityUI() {
+          const panel = new xb.SpatialPanel({
+            width: 1.8,
+            height: 0.6,
+            backgroundColor: '#111827dd' // Dark transparent blue-gray
+          });
+          panel.position.set(0, 1.6, -1.8);
+          this.add(panel);
+
+          const grid = panel.addGrid();
+          grid.addRow({ weight: 0.4 }).addText({
+            text: 'Gravity Simulator',
+            fontSize: 0.12,
+            fontColor: '#ffffff'
+          });
+
+          const btnRow = grid.addRow({ weight: 0.6 });
+
+          // Earth Button (-9.8)
+          const earthBtn = btnRow.addCol({ weight: 0.33 }).addTextButton({
+            text: 'Earth', fontSize: 0.36, backgroundColor: '#3b82f6', fontColor: '#ffffff'
+          });
+          earthBtn.onTriggered = () => this.setGravity(-9.81);
+
+          // Moon Button (-1.6)
+          const moonBtn = btnRow.addCol({ weight: 0.33 }).addTextButton({
+            text: 'Moon', fontSize: 0.36, backgroundColor: '#9ca3af', fontColor: '#111827'
+          });
+          moonBtn.onTriggered = () => this.setGravity(-1.62);
+
+          // Jupiter Button (-24.79)
+          const jupBtn = btnRow.addCol({ weight: 0.33 }).addTextButton({
+            text: 'Jupiter', fontSize: 0.36, backgroundColor: '#ef4444', fontColor: '#ffffff'
+          });
+          jupBtn.onTriggered = () => this.setGravity(-24.79);
+        }
+
+        /**
+         * Populates a starry environment.
+         */
+        createStarrySkybox() {
+          const starGeo = new THREE.BufferGeometry();
+          const starVertices = [];
+          for(let i = 0; i < 2000; i++) {
+            const x = (Math.random() - 0.5) * 200;
+            const y = (Math.random() - 0.5) * 200;
+            const z = (Math.random() - 0.5) * 200;
+            // Push stars far away from the center origin
+            if (x*x + y*y + z*z > 400) {
+              starVertices.push(x, y, z);
+            }
+          }
+          starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+          const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.2 }));
+          this.add(stars);
+        }
+
+        /**
+         * Changes global physics gravity and wakes up resting bodies.
+         * @param {number} gValue - Gravity on the Y axis.
+         */
+        setGravity(gValue) {
+          if (!this.world) return;
+          this.world.gravity = { x: 0, y: gValue, z: 0 };
+          
+          // Wake up any sleeping balls so they react to the new gravity instantly
+          for (const body of this.rigidBodies) {
+            if (body) body.wakeUp();
+          }
+        }
+
+        /**
+         * Triggered on user tap (simulator) or pinch/trigger (XR).
+         * @param {XRInputSourceEvent} event
+         */
+        onSelectStart(event) {
+          const controller = event.target;
+          
+          // Spawn position slightly in front of the hand/cursor
+          const spawnPos = new THREE.Vector3(0, 0, -0.3)
+            .applyQuaternion(controller.quaternion)
+            .add(controller.position);
+          
+          // Give it a gentle toss forward
+          const spawnVel = new THREE.Vector3(0, 0, -2.5)
+            .applyQuaternion(controller.quaternion);
+
+          this.spawnSphere(spawnPos, spawnVel);
+        }
+
+        /**
+         * Creates a visual and physical bouncing ball.
+         */
+        spawnSphere(position, velocity) {
+          if (!this.world) return;
+
+          // Random vivid color for the material
+          const color = new THREE.Color().setHSL(Math.random(), 0.8, 0.6);
+          const material = new THREE.MeshStandardMaterial({ 
+            color: color, 
+            roughness: 0.3, 
+            metalness: 0.2 
+          });
+
+          // Visual Mesh
+          const mesh = new THREE.Mesh(this.sphereGeo, material);
+          mesh.castShadow = true;
+          this.add(mesh);
+
+          // Physics RigidBody (Dynamic)
+          const desc = this.RAPIER.RigidBodyDesc.dynamic()
+            .setTranslation(position.x, position.y, position.z)
+            .setLinvel(velocity.x, velocity.y, velocity.z);
+          const body = this.world.createRigidBody(desc);
+
+          // Physics Collider (Bouncy Ball)
+          const shape = this.RAPIER.ColliderDesc.ball(this.sphereRadius)
+            .setRestitution(0.75) // High bounciness
+            .setFriction(0.5);
+          this.world.createCollider(shape, body);
+
+          // Keep track of references to sync in update()
+          this.spheres.push(mesh);
+          this.rigidBodies.push(body);
+          this.velocities.push(0); 
+        }
+
+        /**
+         * Generates a burst of star particles at the impact site.
+         */
+        emitImpactParticles(position) {
+          const count = 12;
+          for (let i = 0; i < count; i++) {
+            const mesh = new THREE.Mesh(this.starGeo, this.starMat);
+            mesh.position.set(position.x, 0.1, position.z); // Slightly above floor
+
+            // Random upwards explosive velocity
+            const vel = new THREE.Vector3(
+              (Math.random() - 0.5) * 5,
+              Math.random() * 4 + 1,
+              (Math.random() - 0.5) * 5
+            );
+
+            this.add(mesh);
+            this.particles.push({ mesh, vel, life: 1.0 });
+          }
+        }
+
+        /**
+         * Main render loop. Syncs physics -> visuals, manages bouncing effects, and runs particles.
+         */
+        update() {
+          super.update(); // Important: call super to update Spatial UI elements!
+          const dt = xb.getDeltaTime() || 0.016;
+
+          // 1. Sync Spheres
+          if (this.world) {
+            for (let i = 0; i < this.spheres.length; i++) {
+              const mesh = this.spheres[i];
+              const body = this.rigidBodies[i];
+              
+              const translation = body.translation();
+              const rotation = body.rotation();
+
+              const currentYVel = body.linvel().y;
+              const prevYVel = this.velocities[i];
+
+              // Detect bounce: if it was moving down fast, suddenly moves up/stops, and is near the floor
+              if (prevYVel < -1.5 && currentYVel > -0.1 && translation.y < this.sphereRadius + 0.2) {
+                this.emitImpactParticles(translation);
+              }
+
+              this.velocities[i] = currentYVel;
+              mesh.position.copy(translation);
+              mesh.quaternion.copy(rotation);
+
+              // Cleanup objects that fall into the abyss
+              if (translation.y < -20) {
+                this.remove(mesh);
+                this.world.removeRigidBody(body);
+                this.spheres.splice(i, 1);
+                this.rigidBodies.splice(i, 1);
+                this.velocities.splice(i, 1);
+                i--;
+              }
+            }
+          }
+
+          // 2. Animate Particles
+          for (let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            p.life -= dt * 1.5; // Shrink/fade speed
+
+            if (p.life <= 0) {
+              this.remove(p.mesh);
+              this.particles.splice(i, 1);
+            } else {
+              p.mesh.position.addScaledVector(p.vel, dt);
+              p.mesh.scale.setScalar(p.life);
+              p.mesh.rotation.x += dt * 8;
+              p.mesh.rotation.y += dt * 8;
+              p.vel.y -= 9.8 * dt; // Basic gravity for particles
+            }
+          }
+        }
+      }
+
+      // Initialize Application
+      document.addEventListener('DOMContentLoaded', async () => {
+        const options = new xb.Options();
+        options.setAppTitle('Space Gravity Lab');
+        
+        // 1. Enable Spatial UI features
+        options.enableUI();
+        
+        // 2. Enable Physics Engine (Required for Rigidbody logic)
+        options.physics.RAPIER = RAPIER; 
+        
+        // 3. Customize Start Button
+        options.xrButton.startText = 'ENTER GRAVITY LAB';
+
+        xb.add(new SpaceGravityLab());
+        await xb.init(options);
+      });
+    </script>
+  </body>
+</html>
