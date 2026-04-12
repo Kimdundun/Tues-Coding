@@ -2,7 +2,10 @@
 깃허브:<br>
 https://github.com/google/xrblocks  
 라이브데모:<br>
-xrblocks.github.io/gem  
+xrblocks.github.io/gem    
+https://gemini.google.com/gem/1WDoShyJj6v34O-qGYctsZsOR4Rky6C75?usp=sharing
+
+  
 라이브데모 gem 이용했음
 
 
