@@ -1,3 +1,11 @@
+## INTRO  
+깃허브:<br>
+https://github.com/google/xrblocks  
+라이브데모:<br>
+xrblocks.github.io/gem  
+라이브데모 gem 이용했음
+
+
 ## 0412
 vibe coding XR + gemini pro로 만듦.
 
