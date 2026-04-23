@@ -15,5 +15,5 @@ MARKDOWN 문법 잘 몰라요
 https://script.google.com/macros/s/AKfycbw2f4HU9oyDG5eL91BrVPGcbBKd_3_SNEs2H-fQx7xU9h8N42xmsZ3WXwCU2RZEz83F/exec
 
 
-# 웹앱 전시장 (썸넬 업로드 ver)  
-https://script.google.com/macros/s/AKfycbyaIRNaj3m25kGRaXglpPbfNPcdq2WHlUwKxMzgS8ifg69MRep1akNy1dV9yXDkGQabsA/exec  
+# 웹앱 전시장 (썸넬 업로드, 없으면 갸나디 ver)  
+https://script.google.com/macros/s/AKfycbwlZdXHosOgnu86IBXhV0eKsrlTGuzMYoKg5hU5E01JvKq-jHRFIaSSpxF5Hz2FcvGa/exec
